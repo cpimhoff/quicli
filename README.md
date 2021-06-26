@@ -6,9 +6,9 @@ Quicli (pronounced like `quickly`) is a shared definition for simple transaction
 A server can emit a Quicli response for consumption by a Quicli client. Servers and clients can be mixed and matched. Server libraries (under `server/`) can help consumers easily construct valid Quicli responses. Client libraries (under `client/`) can help consumers easily construct interfaces to read Quicli responses and act upon them.
 
 A Quicli response is a list of Quicli data under of of three groups:
-- **Displays:** 
-- **Parameters:**
-- **Actions:**
+- **Displays** show information to users, such as help text, state from the server, or results from a recently invoked action.
+- **Parameters** collect information from users, such as text, files, or lists of records.
+- **Actions**  make requests against the server for further data.
 
 ## Spec
 ### Displays
@@ -34,31 +34,18 @@ type HeadingDisplay = {
 }
 ```
 
+#### Group
+Any place that expects a single `Item` may also accept an array of them. In this case, they are displayed one another another.
+```ts
+type GroupDisplay = Item[]
+```
+
 #### List
-Displays a list of items to users.
+Displays a list of items to users. Unlike `Group` a `List` may have special styling to make it clear that items in the list are semantically related. Nesting `ListDisplays` are supported up to a depth of three at minimum.
 ```ts
 type ListDisplay = {
   type: "display.list",
   content: Item,
-}
-```
-
-#### Group
-Groups semantically relate content together.
-```ts
-type GroupDisplay = Item[] | {
-  type: "display.group",
-  content: Item[],
-}
-```
-
-#### Error
-Displays an error to the user.
-```ts
-type ErrorDisplay = {
-  type: "display.error",
-  content: Item,
-  severity: "error"|"warning",
 }
 ```
 
@@ -75,16 +62,17 @@ type TableDisplay = {
 }
 ```
 
-#### File
-Displays a downloadable file to users. Note that the entire file content is transferred to the client regardless of whether they click on it or not.
+#### SmallFile
+Displays a file to users. 
 ```ts
-type FileDisplay = {
-  type: "display.file",
+type SmallFileDisplay = {
+  type: "display.smallFile",
   fileName: string,
   mimetype: string,
   data: string,
 }
 ```
+Note that the entire file content is transferred to the client regardless of whether they click to save it to their computer or not. The API is named `SmallFile` to reflect this constraint, and the you should avoid sending large files with a single network request.
 
 #### Modes
 Modes define a disjunctive display. While one mode is being shown, all the other modes are not. In a UI, this may be represented as a tab bar. In a CLI, this may be represented as subcommands.
@@ -100,13 +88,43 @@ type ModeDisplay = {
 }
 ```
 
+#### Error
+Displays an error to the user.
+```ts
+type ErrorDisplay = {
+  type: "display.error",
+  content: Item,
+  severity: "error"|"warning",
+}
+```
+
 #### Metadata
-Metadata is not displayed to the end user but can contain any extra data that a client may find useful for debugging or to provide special features not part of the standard library.
+Metadata is not displayed to the end user but can contain any extra data that a client may find useful for logging or debugging. Metadata can be used as an escape hatch to provide platform-specific features not part of the standard specification.
 ```ts
 type MetadataDisplay = {
   type: "display.metadata",
   key: string,
   value: any,
+}
+```
+
+#### Locked
+Any Parameters inside the content of a `Locked` will be displayed but uneditable. This can be used to show users the value of parameters that are set by the system, for example.
+```ts
+type LockedDisplay = {
+  type: "display.locked",
+  content: Item,
+}
+```
+
+#### Hidden
+Any Item inside the content of a `Hidden` will be hidden from end users, but otherwise work normally. This can be used to include extra parameters the server may need but which the user is unaware of.
+
+The content inside of a `Hidden` is only _visually_ hidden, it is not a good place to put _secret_ information like passwords or API keys.
+```ts
+type HiddenDisplay = {
+  type: "display.hidden",
+  content: Item,
 }
 ```
 
@@ -119,9 +137,13 @@ Collects a single string from the user.
 type StringParameter = {
   type: "parameter.string",
   id: string,
+  name: string,
+  help: string,
+  initial: StringParameterValue,
+  isLong: boolean,
 }
 
-type StringParameterValue = string
+type StringParameterValue = string | null
 ```
 
 #### Number
@@ -130,12 +152,15 @@ Collects a single number from the user.
 type NumberParameter = {
   type: "parameter.number",
   id: string,
+  name: string,
+  help: string,
   min: number | null,
   max: number | null,
   step: number | null,
+  initial: NumberParameterValue
 }
 
-type NumberParameterValue = number
+type NumberParameterValue = number | null
 ```
 
 #### Choice
@@ -148,10 +173,13 @@ type ChoiceOption =
 type ChoiceParameter = {
   type: "parameter.choice",
   id: string,
+  name: string,
+  help: string,
   options: ChoiceOption[],
+  initial: ChoiceParameterValue,
 }
 
-type ChoiceParameterValue = string
+type ChoiceParameterValue = string | null
 ```
 
 #### MultiChoice
@@ -160,9 +188,12 @@ The user must select zero or more of the provided values.
 type MultiChoiceParameter = {
   type: "parameter.multiChoice",
   id: string,
+  name: string,
+  help: string,
   options: ChoiceOption[],
   minCount: number | null,
   maxCount: number | null,
+  initial: MultiChoiceParameterValue,
 }
 
 type MultiChoiceParameterValue = string[]
@@ -174,6 +205,9 @@ The user must select either `true` or `false`.
 type BooleanParameter = {
   type: "parameter.boolean",
   id: string,
+  name: string,
+  help: string,
+  initial: BooleanParameterValue,
 }
 
 type BooleanParameterValue = boolean
@@ -185,6 +219,8 @@ The user needs to supply zero or more of the provided inputs.
 type ListParameter = {
   type: "parameter.list",
   id: string,
+  name: string,
+  help: string,
   form: Item,
   minCount: number,
   maxCount: number | null,
@@ -194,13 +230,46 @@ type ListParameterValue = ParamValues[]
 ```
 The `form` entry is repeated for each entry and defines the shape of what is collected.
 
+####  File
+The user can upload a file to the server.
+```ts
+type FileParameter = {
+  type: "parameter.file",
+  id: string,
+  name: string,
+  help: string,
+  allowedMimeTypes: string[],
+}
+
+type FileParameterValue = {
+  fileName: string,
+  mimeType: string,
+  data: string,
+}
+```
+
+#### JSON
+The user may specific any string here representing JSON. If the string is not JSON-encodable, it will be interpreted to be `null`.
+```ts
+type JSONParameter = {
+  type: "parameter.json",
+  id: string,
+  name: string,
+  help: string,
+  initial: JSONParameterValue,
+}
+
+type JSONParameterValue = any | null
+```
+
+The `JSON` parameter is rarely a nice UX for end-users, but can be a powerful way to pass additional information when combined with the `Hidden` display.
+
 #### Button
-When a button is clicked, it executes the action with an `id` matching `actionId`. Buttons have the value of `true` when they were what invoked the action, else `false`.
+When a button is clicked, it executes the action it is contained within. Buttons have the value of `true` when they were what invoked the action, else `false`.
 ```ts
 type ButtonParameter = {
   type: "parameter.button",
   id: string,
-  actionId: string,
   text: string,
   isDestructive: boolean,
 }
@@ -208,82 +277,56 @@ type ButtonParameter = {
 type ButtonParameterValue = boolean
 ```
 
-Whenever an action is invoked, the button which invoked its `id` is included under the special `_invokerButtonId` argument. This can be used to determine the source button more easily than checking the boolean flag of each button parameter.
-
 ### Action
-Actions represent things you can _do_ in a Quicli response.
+Actions represent things you can _do_ in a Quicli response. When an action is invoked, all the parameters inside of its `body` are sent to the server alongside the action’s `id`.
 
 #### Transaction
+A `Transaction` represents a single request a user can make against a server.
+
+When a `Transaction` is invoked, all parameters inside of `body` are collected and sent to the server for processing. The server may then respond with any valid Quicli response, which will be appended to the _end_ of the `Transaction`. In this manner, the server may display results of the action or chain together another step in a multi-part form.
+
 ```ts
 type TransactionAction = {
   type: "action.transaction",
   id: string,
-  version: string,
-  content: Item,
+  body: Item,
 }
 ```
-When a `Transaction` is invoked, all parameters inside of the `Transaction` are collected and sent to the server for processing. The server may then respond with any valid Quicli response, which will be appended to the end of the `Transaction`. In this manner, the server may display results of the action or chain together another step in a multi-part form.
+
+- If there are no `Button`s inside of a `Transaction`’s `body`, then one should inferred at the end, named “Submit” (localized appropriately).
 
 #### Refresh
-When a `Refresh` is invoked, it collects the value of the given `collectParamIds` and sends them to the server for processing. The contents are replaced by new results from the server. `Refresh`s can be invoked by `Buttons` or by its `trigger` property, such as automatically on a time interval or whenever the given parameter is modified.
+A `Refresh` represents a request a user can make against a server on a regular basis, such as polling for the status of a pending job, or updating a piece of content based on the value of another.
+
+When a `Refresh` is first loaded, and then every time it is invoked, all parameters inside of `body` are collected and sent to the server for processing. The server may then respond with any valid Quicli response, which will _replace_ the `Refresh`’s `initialContent` property. The content will be replaced with the new response each time it is invoked.
+
 ```ts
-type RefreshDisplay = {
+type RefreshAction = {
   type: "action.refresh",
   id: string,
-  content: Item | null,
-  trigger:
-    | { paramIds: string[] }
-    | { intervalSeconds: number }
-    | null,
-  collectParamIds: string[]
+  body: Item | null,
+  initialContent: Item | null,
+  
+  triggers: {
+    paramIds: string[],
+    intervalSeconds: number | null,
+    stopOnError: boolean,
+  }
 }
 ```
 
-Any parameters inside `trigger.paramIds` should be assumed to be included as part of `collectParamIds`.
+- `triggers.paramIds` can only reference params inside of `body`.
+- If `triggers.stopOnError` is set, and a response contains an `Error` display anywhere in it, the Refresh should stop running automatically. A Button inside of `body` or the latest content can still invoke it manually. A successful run (containing no errors) re-enables all automatic triggers.
 
-### Helpers
-The above API can be composed to create a variety of complex behaviors. Some of these behaviors are common enough that a shorthand is explicitly documented for normalization. Any conforming implementation of a Quicli server library is expected to provide all the following helpers as shorthand.
+## Patterns
+### Navigation & Routing
+One Quicli server may want to serve many kinds of Quicli responses and field many kinds of requests, separated by different endpoints or HTML pages. This is a common usage, but explicitly left outside of the scope of the Quicli specification.
 
-#### Registry
-An `Registry` is a collection of yet-to-be-fetched Quicli results. Registries can be used as a single place to allow the user to navigate between unrelated “pages” in an app that supports many kinds of operations via Quicli.
+Quicli is about creating displays and defining actions on those displays. How those behaviors are then organized and routed to with respect to one another is up to the consumer. Many great routing libraries exist both on the backend and frontend, and using Quicli should not strong-arm you into a specific solution for that (separate) concern.
 
-```ts
-type RegistryItem = {
-  id: string,
-  name: string,
-  // how each language specifies an implementation
-  // for registry items may differ
-  implementation: () => Item,
-}
+### Nesting Actions
+Actions support nesting to arbitrary levels of depth, which can be quite powerful.
 
-RegistryHelper({
-  id: string,
-  name: string,
-  items: RegistryItem[],
-})
-  =>
-Refresh({
-  id: "{id}-library-provided-implementation",
-  content: [
-    MetadataDisplay(key: "registry", value: { id, name }),
-    ...items.map(i => Button(text: i.name)),
-  ],
-  trigger: null,
-  collectParamIds: [],
-})
-```
+For example, you may have a `Transaction` that, when invoked, sends an email to the selected user. We have millions of potential users to send this email to so we want to allow our admins to search for a user as part of the form. To do so, we can nest a `Refresh` inside of the `Transaction`. The `Refresh.body` would have a `Text` parameter to search for a user, and then return as content the list of users matching that filter as options for a `Choice`. When the top-level `Transaction` is run, it will collect _all_ the parameters (including those nested inside of the inner-Refresh) and send them to our server.
 
-When a button is clicked and a registry item is selected, the library provided implementation should replace the content of `Refresh` with the following:
-```ts
-(registry: Registry, registryItem: RegistryItem)
-  => 
-[
-  MetadataDisplay(
-    key: "sourceRegistry",
-    value: { id: registry.id, name: registry.name },
-  ),
-  ...registryItem.implementation(),
-]
-```
-
-Client libraries are generally expected to understand `registry` and `sourceRegistry` metadata items in a manner to provide navigation helpers, such as routing or back buttons.
+An additional benefit: since the `Refresh` just provides a filter for selecting users, we can _reuse_ the endpoint fulfilling it in other actions.
